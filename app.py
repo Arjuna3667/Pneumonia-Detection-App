@@ -14,44 +14,55 @@ def predict(file):
 
     try:
 
-        # Force-read DICOM
+        # Read DICOM
         ds = pydicom.dcmread(
             file.name,
             force=True
         )
 
-        # Fix missing Transfer Syntax UID
+        # Fix missing transfer syntax
         if not hasattr(ds.file_meta, "TransferSyntaxUID"):
             ds.file_meta.TransferSyntaxUID = (
                 ImplicitVRLittleEndian
             )
 
-        # Read pixel array
+        # Check pixel data exists
+        if 'PixelData' not in ds:
+            return {
+                "Error": 1.0
+            }
+
+        # Read image
         img = ds.pixel_array.astype(np.float32)
 
-        # Resize to model input size
+        # Resize
         img = cv2.resize(
             img,
             (224,224)
         )
 
-        # Normalize
-        img = img / np.max(img)
+        # Safe normalization
+        if np.max(img) > 0:
+            img = img / np.max(img)
 
-        # Convert grayscale → RGB
-        img = cv2.cvtColor(
-            img,
-            cv2.COLOR_GRAY2RGB
-        )
+        # Gray → RGB
+        if len(img.shape) == 2:
+            img = cv2.cvtColor(
+                img,
+                cv2.COLOR_GRAY2RGB
+            )
 
-        # Add batch dimension
+        # Batch dimension
         img = np.expand_dims(
             img,
             axis=0
         )
 
         # Prediction
-        pred = model.predict(img)[0][0]
+        pred = model.predict(
+            img,
+            verbose=0
+        )[0][0]
 
         return {
             "Pneumonia": float(pred),
@@ -59,18 +70,19 @@ def predict(file):
         }
 
     except Exception as e:
-        return str(e)
+        return {
+            "Error": str(e)
+        }
 
-# Gradio UI
 demo = gr.Interface(
     fn=predict,
     inputs=gr.File(
         file_types=[".dcm"],
-        label="Upload DICOM Chest X-ray (.dcm)"
+        label="Upload Chest X-ray DICOM (.dcm)"
     ),
-    outputs=gr.Label(num_top_classes=2),
+    outputs=gr.Label(),
     title="Pneumonia Detection from DICOM X-ray",
-    description="Upload a DICOM (.dcm) chest X-ray image."
+    description="Upload a chest X-ray DICOM image (.dcm)."
 )
 
 demo.launch()
