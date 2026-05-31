@@ -3,6 +3,7 @@ import tensorflow as tf
 import numpy as np
 import cv2
 import pydicom
+from pydicom.uid import ImplicitVRLittleEndian
 
 # Load model
 model = tf.keras.models.load_model(
@@ -11,43 +12,63 @@ model = tf.keras.models.load_model(
 
 def predict(file):
 
-    # Read DICOM
-    ds = pydicom.dcmread(file.name)
-    img = ds.pixel_array
+    try:
 
-    # Resize
-    img = cv2.resize(img, (224,224))
+        # Force-read DICOM
+        ds = pydicom.dcmread(
+            file.name,
+            force=True
+        )
 
-    # Normalize
-    img = img / 255.0
+        # Fix missing Transfer Syntax UID
+        if not hasattr(ds.file_meta, "TransferSyntaxUID"):
+            ds.file_meta.TransferSyntaxUID = (
+                ImplicitVRLittleEndian
+            )
 
-    # Convert grayscale → RGB
-    img = cv2.cvtColor(
-        img.astype(np.float32),
-        cv2.COLOR_GRAY2RGB
-    )
+        # Read pixel array
+        img = ds.pixel_array.astype(np.float32)
 
-    img = np.expand_dims(img, axis=0)
+        # Resize to model input size
+        img = cv2.resize(
+            img,
+            (224,224)
+        )
 
-    pred = model.predict(img)[0][0]
+        # Normalize
+        img = img / np.max(img)
 
-    pneumonia_prob = float(pred)
-    normal_prob = 1 - pneumonia_prob
+        # Convert grayscale → RGB
+        img = cv2.cvtColor(
+            img,
+            cv2.COLOR_GRAY2RGB
+        )
 
-    return {
-        "Pneumonia": pneumonia_prob,
-        "Normal": normal_prob
-    }
+        # Add batch dimension
+        img = np.expand_dims(
+            img,
+            axis=0
+        )
 
+        # Prediction
+        pred = model.predict(img)[0][0]
+
+        return {
+            "Pneumonia": float(pred),
+            "Normal": float(1-pred)
+        }
+
+    except Exception as e:
+        return str(e)
+
+# Gradio UI
 demo = gr.Interface(
     fn=predict,
     inputs=gr.File(
         file_types=[".dcm"],
         label="Upload DICOM Chest X-ray (.dcm)"
     ),
-    outputs=gr.Label(
-        num_top_classes=2
-    ),
+    outputs=gr.Label(num_top_classes=2),
     title="Pneumonia Detection from DICOM X-ray",
     description="Upload a DICOM (.dcm) chest X-ray image."
 )
